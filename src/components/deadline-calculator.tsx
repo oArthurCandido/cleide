@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -16,8 +16,13 @@ import { CalendarIcon, Clock, Settings, Save } from "lucide-react";
 import { addBusinessDays, format } from "date-fns";
 import { Textarea } from "./ui/textarea";
 import { createOrderAction } from "@/app/actions";
+import { createClient } from "../../supabase/client";
 
 export default function DeadlineCalculator() {
+  // Product names
+  const [productAName, setProductAName] = useState("Produto A");
+  const [productBName, setProductBName] = useState("Produto B");
+
   // Default production times (minutes per unit)
   const [productionTimeA, setProductionTimeA] = useState(30);
   const [productionTimeB, setProductionTimeB] = useState(45);
@@ -37,22 +42,102 @@ export default function DeadlineCalculator() {
   const [completionDate, setCompletionDate] = useState<Date | null>(null);
   const [calculated, setCalculated] = useState(false);
 
-  const calculateDeadline = () => {
-    // Calculate total production time in minutes
-    const totalTimeA = quantityA * productionTimeA;
-    const totalTimeB = quantityB * productionTimeB;
-    const totalProductionTime = totalTimeA + totalTimeB;
+  // Load settings from database
+  useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("settings")
+          .select("*")
+          .single();
 
-    // Calculate number of days needed (rounded up)
-    const days = Math.ceil(totalProductionTime / dailyCapacity);
+        if (data && !error) {
+          setProductAName(data.product_a_name || "Produto A");
+          setProductBName(data.product_b_name || "Produto B");
+          setProductionTimeA(data.product_a_time || 30);
+          setProductionTimeB(data.product_b_time || 45);
+        }
+      } catch (error) {
+        console.error("Error loading settings:", error);
+      }
+    };
 
-    // Calculate completion date (adding business days)
-    const today = new Date();
-    const completion = addBusinessDays(today, days);
+    loadSettings();
+  }, []);
 
-    setTotalDays(days);
-    setCompletionDate(completion);
-    setCalculated(true);
+  const calculateDeadline = async () => {
+    try {
+      // Calculate total production time in minutes for this order
+      const totalTimeA = quantityA * productionTimeA;
+      const totalTimeB = quantityB * productionTimeB;
+      const totalProductionTime = totalTimeA + totalTimeB;
+
+      // Calculate number of days needed for this order (rounded up)
+      const orderDays = Math.ceil(totalProductionTime / dailyCapacity);
+
+      // Get existing orders to calculate actual completion date
+      const supabase = createClient();
+      const { data: existingOrders, error } = await supabase
+        .from("orders")
+        .select("*")
+        .in("status", ["pending", "in_progress"])
+        .order("created_at", { ascending: true });
+
+      if (error) {
+        console.error("Error fetching existing orders:", error);
+        // Continue with calculation without considering existing orders
+        setTotalDays(orderDays);
+        setCompletionDate(addBusinessDays(new Date(), orderDays));
+        setCalculated(true);
+        return;
+      }
+
+      // Calculate total days considering existing orders
+      let totalDays = orderDays;
+      let startDate = new Date();
+
+      if (existingOrders && existingOrders.length > 0) {
+        // Calculate total production time of existing orders
+        let existingOrdersDays = 0;
+
+        for (const order of existingOrders) {
+          // For each order, calculate its remaining production time
+          const orderTotalTime =
+            order.product_a_quantity * order.production_time_a +
+            order.product_b_quantity * order.production_time_b;
+
+          const orderDays = Math.ceil(orderTotalTime / order.daily_capacity);
+          existingOrdersDays += orderDays;
+        }
+
+        // Add the days from existing orders to our new order's start date
+        startDate = addBusinessDays(startDate, existingOrdersDays);
+
+        // The total days is now the existing orders plus this new order
+        totalDays = existingOrdersDays + orderDays;
+      }
+
+      // Calculate completion date based on the adjusted start date
+      const completion = addBusinessDays(startDate, orderDays);
+
+      setTotalDays(totalDays);
+      setCompletionDate(completion);
+      setCalculated(true);
+    } catch (error) {
+      console.error("Error calculating deadline:", error);
+      // Fallback to simple calculation
+      const totalTimeA = quantityA * productionTimeA;
+      const totalTimeB = quantityB * productionTimeB;
+      const totalProductionTime = totalTimeA + totalTimeB;
+      const days = Math.ceil(totalProductionTime / dailyCapacity);
+      const today = new Date();
+      const completion = addBusinessDays(today, days);
+
+      setTotalDays(days);
+      setCompletionDate(completion);
+      setCalculated(true);
+    }
   };
 
   return (
@@ -76,7 +161,7 @@ export default function DeadlineCalculator() {
                 htmlFor="quantityA"
                 className="text-blue-800 font-medium block mb-2"
               >
-                Quantidade do Produto A
+                Quantidade de {productAName}
               </Label>
               <Input
                 id="quantityA"
@@ -114,7 +199,7 @@ export default function DeadlineCalculator() {
                 htmlFor="quantityB"
                 className="text-purple-800 font-medium block mb-2"
               >
-                Quantidade do Produto B
+                Quantidade de {productBName}
               </Label>
               <Input
                 id="quantityB"

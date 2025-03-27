@@ -198,17 +198,66 @@ export const createOrderAction = async (formData: FormData) => {
   );
   const notes = formData.get("notes")?.toString() || "";
 
-  // Calculate total production time in minutes
+  // Get existing orders that are pending or in progress
+  const { data: existingOrders, error: fetchError } = await supabase
+    .from("orders")
+    .select("*")
+    .in("status", ["pending", "in_progress"])
+    .order("created_at", { ascending: true });
+
+  if (fetchError) {
+    console.error("Error fetching existing orders:", fetchError);
+    return encodedRedirect(
+      "error",
+      "/calculator",
+      "Erro ao verificar pedidos existentes: " + fetchError.message,
+    );
+  }
+
+  // Calculate total production time for new order in minutes
   const totalTimeA = productAQuantity * productionTimeA;
   const totalTimeB = productBQuantity * productionTimeB;
   const totalProductionTime = totalTimeA + totalTimeB;
 
-  // Calculate number of days needed (rounded up)
-  const totalDays = Math.ceil(totalProductionTime / dailyCapacity);
+  // Calculate number of days needed for this order (rounded up)
+  const orderDays = Math.ceil(totalProductionTime / dailyCapacity);
 
-  // Calculate completion date (adding business days)
-  const today = new Date();
-  const completionDate = addBusinessDays(today, totalDays);
+  // Calculate total days considering existing orders
+  let totalDays = orderDays;
+  let startDate = new Date();
+
+  if (existingOrders && existingOrders.length > 0) {
+    // Calculate total production time of existing orders
+    let existingOrdersDays = 0;
+
+    for (const order of existingOrders) {
+      // For each order, calculate its remaining production time
+      const orderTotalTime =
+        order.product_a_quantity * order.production_time_a +
+        order.product_b_quantity * order.production_time_b;
+
+      const orderDays = Math.ceil(orderTotalTime / order.daily_capacity);
+      existingOrdersDays += orderDays;
+    }
+
+    // Add the days from existing orders to our new order's start date
+    startDate = addBusinessDays(startDate, existingOrdersDays);
+
+    // The total days is now the existing orders plus this new order
+    totalDays = existingOrdersDays + orderDays;
+  }
+
+  // Calculate completion date based on the adjusted start date
+  const completionDate = addBusinessDays(startDate, orderDays);
+
+  // Get product names from settings
+  const { data: settingsData } = await supabase
+    .from("settings")
+    .select("*")
+    .single();
+
+  const productAName = settingsData?.product_a_name || "Produto A";
+  const productBName = settingsData?.product_b_name || "Produto B";
 
   // Insert order into database
   const { data, error } = await supabase
@@ -217,10 +266,12 @@ export const createOrderAction = async (formData: FormData) => {
       user_id: session.user.id,
       product_a_quantity: productAQuantity,
       product_b_quantity: productBQuantity,
+      product_a_name: productAName,
+      product_b_name: productBName,
       production_time_a: productionTimeA,
       production_time_b: productionTimeB,
       daily_capacity: dailyCapacity,
-      total_days: totalDays,
+      total_days: orderDays,
       estimated_completion_date: format(completionDate, "yyyy-MM-dd"),
       status: "pending",
       notes: notes,
@@ -240,7 +291,8 @@ export const createOrderAction = async (formData: FormData) => {
   return encodedRedirect(
     "success",
     "/calculator",
-    "Pedido criado com sucesso e adicionado à fila de produção!",
+    "Pedido criado com sucesso e adicionado à fila de produção! Conclusão prevista para " +
+      format(completionDate, "dd/MM/yyyy"),
   );
 };
 
@@ -255,7 +307,7 @@ export const updateOrderStatusAction = async (formData: FormData) => {
   if (!session) {
     return encodedRedirect(
       "error",
-      "/dashboard",
+      "/dashboard/orders",
       "Você precisa estar logado para atualizar um pedido",
     );
   }
@@ -267,7 +319,7 @@ export const updateOrderStatusAction = async (formData: FormData) => {
   if (!orderId || !status) {
     return encodedRedirect(
       "error",
-      "/dashboard",
+      "/dashboard/orders",
       "ID do pedido e status são obrigatórios",
     );
   }
@@ -293,14 +345,22 @@ export const updateOrderStatusAction = async (formData: FormData) => {
     console.error("Error updating order:", error);
     return encodedRedirect(
       "error",
-      "/dashboard",
+      "/dashboard/orders",
       "Erro ao atualizar pedido: " + error.message,
     );
   }
 
+  // Determine which tab to return to
+  const returnTab =
+    status === "completed"
+      ? "completed"
+      : status === "in_progress"
+        ? "in_progress"
+        : "pending";
+
   return encodedRedirect(
     "success",
-    "/dashboard",
+    `/dashboard/orders?tab=${returnTab}`,
     status === "completed"
       ? "Pedido marcado como concluído!"
       : "Status do pedido atualizado!",

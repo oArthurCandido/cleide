@@ -67,7 +67,29 @@ export default function ReportsPage() {
     }
   };
 
+  // Load product names from settings
+  const [productAName, setProductAName] = useState("Produto A");
+  const [productBName, setProductBName] = useState("Produto B");
+
   useEffect(() => {
+    const loadSettings = async () => {
+      try {
+        const supabase = createClient();
+        const { data, error } = await supabase
+          .from("settings")
+          .select("*")
+          .single();
+
+        if (data && !error) {
+          setProductAName(data.product_a_name || "Produto A");
+          setProductBName(data.product_b_name || "Produto B");
+        }
+      } catch (error) {
+        console.error("Error loading settings:", error);
+      }
+    };
+
+    loadSettings();
     fetchReports();
   }, []);
 
@@ -111,12 +133,12 @@ export default function ReportsPage() {
                   color="blue"
                 />
                 <SummaryCard
-                  title="Total Produto A"
+                  title={`Total ${productAName}`}
                   value={summary.totalProductA.toString()}
                   color="green"
                 />
                 <SummaryCard
-                  title="Total Produto B"
+                  title={`Total ${productBName}`}
                   value={summary.totalProductB.toString()}
                   color="purple"
                 />
@@ -142,8 +164,8 @@ export default function ReportsPage() {
                         <th className="py-3 px-4 text-left">ID</th>
                         <th className="py-3 px-4 text-left">Data Criação</th>
                         <th className="py-3 px-4 text-left">Data Conclusão</th>
-                        <th className="py-3 px-4 text-right">Produto A</th>
-                        <th className="py-3 px-4 text-right">Produto B</th>
+                        <th className="py-3 px-4 text-right">{productAName}</th>
+                        <th className="py-3 px-4 text-right">{productBName}</th>
                         <th className="py-3 px-4 text-right">Dias</th>
                       </tr>
                     </thead>

@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { updateOrderStatusAction } from "@/app/actions";
 import { format } from "date-fns";
 
@@ -54,7 +55,17 @@ export default function OrdersPage() {
   };
 
   useEffect(() => {
-    fetchOrders(activeTab);
+    // Check if there's a tab parameter in the URL
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabParam = urlParams.get("tab");
+    if (
+      tabParam &&
+      ["pending", "in_progress", "completed", "canceled"].includes(tabParam)
+    ) {
+      setActiveTab(tabParam);
+    }
+
+    fetchOrders(tabParam || activeTab);
 
     // Set up realtime subscription
     const supabase = createClient();
@@ -69,7 +80,7 @@ export default function OrdersPage() {
           table: "orders",
         },
         () => {
-          fetchOrders(activeTab);
+          fetchOrders(tabParam || activeTab);
         },
       )
       .subscribe();
@@ -91,11 +102,12 @@ export default function OrdersPage() {
       <div className="container mx-auto py-12 px-4">
         <h1 className="text-3xl font-bold mb-8">Gerenciamento de Pedidos</h1>
 
-        <Tabs defaultValue="pending" onValueChange={handleTabChange}>
-          <TabsList className="grid w-full grid-cols-3 mb-8">
+        <Tabs value={activeTab} onValueChange={handleTabChange}>
+          <TabsList className="grid w-full grid-cols-4 mb-8">
             <TabsTrigger value="pending">Pendentes</TabsTrigger>
             <TabsTrigger value="in_progress">Em Produção</TabsTrigger>
             <TabsTrigger value="completed">Concluídos</TabsTrigger>
+            <TabsTrigger value="canceled">Cancelados</TabsTrigger>
           </TabsList>
 
           <TabsContent value="pending">
@@ -128,6 +140,17 @@ export default function OrdersPage() {
               status="completed"
               title="Pedidos Concluídos"
               emptyMessage="Não há pedidos concluídos."
+            />
+          </TabsContent>
+
+          <TabsContent value="canceled">
+            <OrdersList
+              orders={orders}
+              loading={loading}
+              error={error}
+              status="canceled"
+              title="Pedidos Cancelados"
+              emptyMessage="Não há pedidos cancelados."
             />
           </TabsContent>
         </Tabs>
@@ -179,22 +202,116 @@ function OrdersList({
 
 function OrderCard({ order, status }: { order: Order; status: string }) {
   const [notes, setNotes] = useState(order.notes || "");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedProductA, setEditedProductA] = useState(
+    order.product_a_quantity,
+  );
+  const [editedProductB, setEditedProductB] = useState(
+    order.product_b_quantity,
+  );
+  const [isSaving, setIsSaving] = useState(false);
+  const [editMessage, setEditMessage] = useState("");
+
+  const handleEdit = async () => {
+    setIsSaving(true);
+    setEditMessage("");
+
+    try {
+      const response = await fetch("/api/edit-order", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          orderId: order.id,
+          productAQuantity: editedProductA,
+          productBQuantity: editedProductB,
+          notes: notes,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Falha ao editar pedido");
+      }
+
+      setEditMessage("Pedido atualizado com sucesso!");
+      setTimeout(() => {
+        setIsEditing(false);
+        setEditMessage("");
+      }, 1500);
+    } catch (error) {
+      console.error("Error editing order:", error);
+      setEditMessage("Erro ao editar pedido. Tente novamente.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const getStatusActions = () => {
     switch (status) {
       case "pending":
         return (
-          <form action={updateOrderStatusAction}>
-            <input type="hidden" name="orderId" value={order.id} />
-            <input type="hidden" name="status" value="in_progress" />
-            <input type="hidden" name="notes" value={notes} />
-            <Button
-              type="submit"
-              className="w-full bg-blue-600 hover:bg-blue-700"
-            >
-              Iniciar Produção
-            </Button>
-          </form>
+          <div className="flex flex-col gap-2">
+            {isEditing ? (
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleEdit}
+                  disabled={isSaving}
+                  className="flex-1 bg-green-600 hover:bg-green-700"
+                >
+                  {isSaving ? "Salvando..." : "Salvar Alterações"}
+                </Button>
+                <Button
+                  onClick={() => {
+                    setIsEditing(false);
+                    setEditedProductA(order.product_a_quantity);
+                    setEditedProductB(order.product_b_quantity);
+                    setNotes(order.notes || "");
+                  }}
+                  variant="outline"
+                  className="flex-1"
+                >
+                  Cancelar
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2">
+                  <form action={updateOrderStatusAction} className="flex-1">
+                    <input type="hidden" name="orderId" value={order.id} />
+                    <input type="hidden" name="status" value="in_progress" />
+                    <input type="hidden" name="notes" value={notes} />
+                    <Button
+                      type="submit"
+                      className="w-full bg-blue-600 hover:bg-blue-700"
+                    >
+                      Iniciar Produção
+                    </Button>
+                  </form>
+                  <Button
+                    onClick={() => setIsEditing(true)}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    Editar Pedido
+                  </Button>
+                </div>
+                <form action={updateOrderStatusAction}>
+                  <input type="hidden" name="orderId" value={order.id} />
+                  <input type="hidden" name="status" value="canceled" />
+                  <input type="hidden" name="notes" value={notes} />
+                  <Button
+                    type="submit"
+                    className="w-full bg-red-600 hover:bg-red-700"
+                  >
+                    Cancelar Pedido
+                  </Button>
+                </form>
+              </div>
+            )}
+          </div>
         );
       case "in_progress":
         return (
@@ -207,6 +324,20 @@ function OrderCard({ order, status }: { order: Order; status: string }) {
               className="w-full bg-green-600 hover:bg-green-700"
             >
               Marcar como Concluído
+            </Button>
+          </form>
+        );
+      case "canceled":
+        return (
+          <form action={updateOrderStatusAction}>
+            <input type="hidden" name="orderId" value={order.id} />
+            <input type="hidden" name="status" value="pending" />
+            <input type="hidden" name="notes" value={notes} />
+            <Button
+              type="submit"
+              className="w-full bg-blue-600 hover:bg-blue-700"
+            >
+              Reativar Pedido
             </Button>
           </form>
         );
@@ -226,16 +357,57 @@ function OrderCard({ order, status }: { order: Order; status: string }) {
         </div>
       </CardHeader>
       <CardContent className="pt-4">
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="bg-blue-50 p-3 rounded-lg">
-            <div className="text-sm text-blue-800">Produto A</div>
-            <div className="text-xl font-bold">{order.product_a_quantity}</div>
+        {isEditing && status === "pending" ? (
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="bg-blue-50 p-3 rounded-lg">
+              <div className="text-sm text-blue-800">
+                {order.product_a_name || "Produto A"}
+              </div>
+              <Input
+                type="number"
+                min="0"
+                value={editedProductA}
+                onChange={(e) =>
+                  setEditedProductA(parseInt(e.target.value) || 0)
+                }
+                className="mt-1 bg-white"
+              />
+            </div>
+            <div className="bg-purple-50 p-3 rounded-lg">
+              <div className="text-sm text-purple-800">
+                {order.product_b_name || "Produto B"}
+              </div>
+              <Input
+                type="number"
+                min="0"
+                value={editedProductB}
+                onChange={(e) =>
+                  setEditedProductB(parseInt(e.target.value) || 0)
+                }
+                className="mt-1 bg-white"
+              />
+            </div>
           </div>
-          <div className="bg-purple-50 p-3 rounded-lg">
-            <div className="text-sm text-purple-800">Produto B</div>
-            <div className="text-xl font-bold">{order.product_b_quantity}</div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="bg-blue-50 p-3 rounded-lg">
+              <div className="text-sm text-blue-800">
+                {order.product_a_name || "Produto A"}
+              </div>
+              <div className="text-xl font-bold">
+                {order.product_a_quantity}
+              </div>
+            </div>
+            <div className="bg-purple-50 p-3 rounded-lg">
+              <div className="text-sm text-purple-800">
+                {order.product_b_name || "Produto B"}
+              </div>
+              <div className="text-xl font-bold">
+                {order.product_b_quantity}
+              </div>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="mb-4">
           <div className="text-sm font-medium mb-1">Prazo de Produção</div>
@@ -256,7 +428,7 @@ function OrderCard({ order, status }: { order: Order; status: string }) {
           </div>
         </div>
 
-        {status !== "completed" && (
+        {status !== "completed" && status !== "canceled" && (
           <div className="mb-4">
             <label className="text-sm font-medium mb-1 block">
               Observações
@@ -270,7 +442,7 @@ function OrderCard({ order, status }: { order: Order; status: string }) {
           </div>
         )}
 
-        {status === "completed" && order.notes && (
+        {(status === "completed" || status === "canceled") && order.notes && (
           <div className="mb-4">
             <div className="text-sm font-medium mb-1">Observações</div>
             <div className="text-sm bg-gray-50 p-2 rounded">{order.notes}</div>
@@ -283,6 +455,23 @@ function OrderCard({ order, status }: { order: Order; status: string }) {
             {order.completed_at
               ? format(new Date(order.completed_at), "dd/MM/yyyy")
               : "N/A"}
+          </div>
+        )}
+
+        {status === "canceled" && (
+          <div className="text-sm text-red-600 font-medium">
+            Cancelado em:{" "}
+            {order.completed_at
+              ? format(new Date(order.completed_at), "dd/MM/yyyy")
+              : "N/A"}
+          </div>
+        )}
+
+        {editMessage && (
+          <div
+            className={`text-sm ${editMessage.includes("Erro") ? "text-red-600" : "text-green-600"} font-medium mb-4`}
+          >
+            {editMessage}
           </div>
         )}
 
