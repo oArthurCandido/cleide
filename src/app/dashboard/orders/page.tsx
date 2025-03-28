@@ -65,8 +65,6 @@ export default function OrdersPage() {
       setActiveTab(tabParam);
     }
 
-    fetchOrders(tabParam || activeTab);
-
     // Set up realtime subscription
     const supabase = createClient();
 
@@ -80,14 +78,27 @@ export default function OrdersPage() {
           table: "orders",
         },
         () => {
-          fetchOrders(tabParam || activeTab);
+          fetchOrders(activeTab);
         },
       )
       .subscribe();
 
+    // Initial fetch
+    fetchOrders(tabParam || activeTab);
+
     return () => {
       subscription.unsubscribe();
     };
+  }, []);
+
+  // This effect runs when activeTab changes
+  useEffect(() => {
+    fetchOrders(activeTab);
+
+    // Update URL without full page reload
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", activeTab);
+    window.history.pushState({}, "", url);
   }, [activeTab]);
 
   const handleTabChange = (value: string) => {
@@ -177,7 +188,12 @@ function OrdersList({
   emptyMessage: string;
 }) {
   if (loading) {
-    return <div className="text-center py-12">Carregando pedidos...</div>;
+    return (
+      <div className="text-center py-12">
+        <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+        <p className="mt-4">Carregando pedidos...</p>
+      </div>
+    );
   }
 
   if (error) {

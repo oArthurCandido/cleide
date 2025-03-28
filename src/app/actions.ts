@@ -6,6 +6,60 @@ import { redirect } from "next/navigation";
 import { createClient } from "../../supabase/server";
 import { addBusinessDays, format } from "date-fns";
 
+// Helper function to recalculate deadlines for all pending and in-progress orders
+async function recalculateOrderDeadlines(supabase: any) {
+  try {
+    // Get all pending and in-progress orders ordered by creation date
+    const { data: activeOrders, error: fetchError } = await supabase
+      .from("orders")
+      .select("*")
+      .in("status", ["pending", "in_progress"])
+      .order("created_at", { ascending: true });
+
+    if (fetchError || !activeOrders) {
+      console.error("Error fetching active orders:", fetchError);
+      return;
+    }
+
+    // Start with today's date
+    let currentDate = new Date();
+
+    // Process each order and update its deadline
+    for (let i = 0; i < activeOrders.length; i++) {
+      const order = activeOrders[i];
+
+      // Calculate production time for this order
+      const totalTimeA = order.product_a_quantity * order.production_time_a;
+      const totalTimeB = order.product_b_quantity * order.production_time_b;
+      const totalProductionTime = totalTimeA + totalTimeB;
+
+      // Calculate days needed for this order
+      const orderDays = Math.ceil(totalProductionTime / order.daily_capacity);
+
+      // Calculate new completion date based on current date
+      const newCompletionDate = addBusinessDays(currentDate, orderDays);
+
+      // Update the order with new completion date
+      const { error: updateError } = await supabase
+        .from("orders")
+        .update({
+          estimated_completion_date: format(newCompletionDate, "yyyy-MM-dd"),
+          total_days: orderDays,
+        })
+        .eq("id", order.id);
+
+      if (updateError) {
+        console.error(`Error updating order ${order.id}:`, updateError);
+      }
+
+      // Move current date forward for the next order
+      currentDate = addBusinessDays(currentDate, orderDays);
+    }
+  } catch (error) {
+    console.error("Error in recalculateOrderDeadlines:", error);
+  }
+}
+
 export const signUpAction = async (formData: FormData) => {
   const email = formData.get("email")?.toString();
   const password = formData.get("password")?.toString();
@@ -198,6 +252,15 @@ export const createOrderAction = async (formData: FormData) => {
   );
   const notes = formData.get("notes")?.toString() || "";
 
+  // Validate input
+  if (productAQuantity === 0 && productBQuantity === 0) {
+    return encodedRedirect(
+      "error",
+      "/calculator",
+      "É necessário informar a quantidade de pelo menos um produto",
+    );
+  }
+
   // Get existing orders that are pending or in progress
   const { data: existingOrders, error: fetchError } = await supabase
     .from("orders")
@@ -288,10 +351,13 @@ export const createOrderAction = async (formData: FormData) => {
     );
   }
 
+  // Success! Now update all other pending orders to recalculate their deadlines
+  await recalculateOrderDeadlines(supabase);
+
   return encodedRedirect(
     "success",
-    "/calculator",
-    "Pedido criado com sucesso e adicionado à fila de produção! Conclusão prevista para " +
+    `/calculator?orderId=${data.id}&success=true`,
+    "✅ Pedido criado com sucesso! Seu pedido foi adicionado à fila de produção com conclusão prevista para " +
       format(completionDate, "dd/MM/yyyy"),
   );
 };
@@ -324,6 +390,22 @@ export const updateOrderStatusAction = async (formData: FormData) => {
     );
   }
 
+  // Get the current order to know its previous status
+  const { data: currentOrder, error: fetchError } = await supabase
+    .from("orders")
+    .select("*")
+    .eq("id", orderId)
+    .single();
+
+  if (fetchError) {
+    console.error("Error fetching order:", fetchError);
+    return encodedRedirect(
+      "error",
+      "/dashboard/orders",
+      "Erro ao buscar informações do pedido: " + fetchError.message,
+    );
+  }
+
   const updateData: any = { status };
 
   // If status is completed, add completion date
@@ -346,8 +428,13 @@ export const updateOrderStatusAction = async (formData: FormData) => {
     return encodedRedirect(
       "error",
       "/dashboard/orders",
-      "Erro ao atualizar pedido: " + error.message,
+      "❌ Erro ao atualizar pedido: " + error.message,
     );
+  }
+
+  // If the status changed, recalculate deadlines for all pending and in-progress orders
+  if (currentOrder.status !== status) {
+    await recalculateOrderDeadlines(supabase);
   }
 
   // Determine which tab to return to
@@ -358,11 +445,23 @@ export const updateOrderStatusAction = async (formData: FormData) => {
         ? "in_progress"
         : "pending";
 
+  // Create appropriate success message based on the status change
+  let successMessage = "";
+  if (status === "completed") {
+    successMessage = "✅ Pedido marcado como concluído com sucesso!";
+  } else if (status === "in_progress") {
+    successMessage = "🔄 Pedido movido para produção com sucesso!";
+  } else if (status === "pending") {
+    successMessage = "⏳ Pedido movido para pendentes com sucesso!";
+  } else if (status === "canceled") {
+    successMessage = "❌ Pedido cancelado com sucesso!";
+  } else {
+    successMessage = "Status do pedido atualizado com sucesso!";
+  }
+
   return encodedRedirect(
     "success",
     `/dashboard/orders?tab=${returnTab}`,
-    status === "completed"
-      ? "Pedido marcado como concluído!"
-      : "Status do pedido atualizado!",
+    successMessage,
   );
 };

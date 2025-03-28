@@ -24,11 +24,11 @@ export async function GET(request: NextRequest) {
 
     // Add date filters if provided
     if (startDate) {
-      query = query.gte("completed_at", startDate);
+      query = query.gte("completed_at", `${startDate}T00:00:00`);
     }
 
     if (endDate) {
-      query = query.lte("completed_at", endDate);
+      query = query.lte("completed_at", `${endDate}T23:59:59`);
     }
 
     // Execute query

@@ -1,13 +1,27 @@
-import Navbar from "@/components/navbar";
+"use client";
+
+import dynamic from "next/dynamic";
+const Navbar = dynamic(() => import("@/components/navbar"), { ssr: false });
 import Footer from "@/components/footer";
 import DeadlineCalculator from "@/components/deadline-calculator";
+import { FormMessage } from "@/components/ui/form-message";
+import { useSearchParams } from "next/navigation";
 
 export default function CalculatorPage() {
+  const searchParams = useSearchParams();
+  const errorMessage = searchParams.get("error");
+  const successMessage = searchParams.get("success");
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-white to-gray-50">
       <Navbar />
 
       <div className="py-16 container mx-auto px-4">
+        {errorMessage && (
+          <div className="max-w-3xl mx-auto mb-6">
+            <FormMessage type="error" message={errorMessage} />
+          </div>
+        )}
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold mb-4">
             Calculadora de Prazos de Produção

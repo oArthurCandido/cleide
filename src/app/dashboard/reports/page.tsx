@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { format, subDays } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { DatePickerWithRange } from "@/components/ui/date-picker-with-range";
+import { createClient } from "../../../../supabase/client";
 
 type Order = {
   id: string;
@@ -39,6 +40,7 @@ export default function ReportsPage() {
   const fetchReports = async () => {
     try {
       setLoading(true);
+      setError(null);
 
       let url = "/api/reports";
       if (dateRange?.from) {
@@ -57,6 +59,11 @@ export default function ReportsPage() {
       const data = await response.json();
       setOrders(data.orders || []);
       setSummary(data.summary || null);
+
+      // If no orders were found, show a friendly message instead of an error
+      if (data.orders && data.orders.length === 0) {
+        setError("Nenhum pedido concluído encontrado no período selecionado.");
+      }
     } catch (err) {
       console.error("Error fetching reports:", err);
       setError(
@@ -120,7 +127,10 @@ export default function ReportsPage() {
         </div>
 
         {loading ? (
-          <div className="text-center py-12">Carregando relatórios...</div>
+          <div className="text-center py-12">
+            <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-blue-600 border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]"></div>
+            <p className="mt-4">Carregando relatórios...</p>
+          </div>
         ) : error ? (
           <div className="text-center py-12 text-red-500">{error}</div>
         ) : (
